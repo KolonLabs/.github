@@ -1,4 +1,4 @@
-name: NuGet · CI & Publish
+name: NuGet CI & Publish
 
 # Workflow reutilizable. Invocar desde cada repositorio SDK con:
 #
