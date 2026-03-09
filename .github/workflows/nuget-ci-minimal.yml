@@ -32,7 +32,6 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: build
-    if: inputs.release_type != ''
     permissions:
       contents: write
     steps:
