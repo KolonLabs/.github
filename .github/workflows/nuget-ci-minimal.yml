@@ -40,10 +40,4 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: |
-            8.x
-            10.x
-      - run: echo "done ${{ inputs.release_type }}"
+      - run: echo "done"
