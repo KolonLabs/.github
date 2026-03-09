@@ -25,6 +25,7 @@
   - [6.1 Repositorio con un solo paquete](#61-repositorio-con-un-solo-paquete)
   - [6.2 Repositorio con múltiples paquetes](#62-repositorio-con-múltiples-paquetes)
   - [6.3 nuget.config](#63-nugetconfig)
+  - [6.4 Secret de organización `KOLONLABS_NUGET_TOKEN`](#64-secret-de-organización-kolonlabs_nuget_token)
 
 ---
 
@@ -61,6 +62,8 @@ GitHub Packages requiere autenticación tanto para publicar como para consumir p
      - `read:packages` — para consumir paquetes desde local
 
 3. Haz clic en **Generate token** y copia el valor generado (`ghp_...`). Solo se muestra una vez.
+
+> **Para el secret de organización usado en CI/CD:** el PAT que se configura como `KOLONLABS_NUGET_TOKEN` en la organización necesita `write:packages` (que incluye `read:packages`). Ver sección [6.4](#64-secret-de-organización-kolonlabs_nuget_token).
 
 ### 2.2 Configurar las variables de entorno
 
@@ -202,15 +205,14 @@ Los tags en repos multi-paquete incluyen el nombre del paquete como prefijo para
 
 ### 4.2 En GitHub Actions (build / test / deploy)
 
-`GITHUB_TOKEN` tiene permisos `packages: read` automáticamente para repos dentro de la misma organización. No se necesita ningún secret adicional.
+> **Importante:** `GITHUB_TOKEN` en GitHub Actions solo tiene acceso a los paquetes publicados por el **propio repositorio**. Para consumir paquetes de otros repositorios de la organización (p.ej. `KL.Common` desde `sdk-common`), se obtiene un **403 Forbidden**. Es obligatorio usar el secret de organización `KOLONLABS_NUGET_TOKEN`.
+
+El secret `KOLONLABS_NUGET_TOKEN` se configura a nivel de organización (ver sección [6.4](#64-secret-de-organización-kolonlabs_nuget_token)) y se propaga automáticamente a todos los repos mediante `secrets: inherit` en el workflow caller.
 
 ```yaml
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
 
     steps:
       - uses: actions/checkout@v4
@@ -223,7 +225,7 @@ jobs:
       - name: Restore
         run: dotnet restore
         env:
-          KOLONLABS_NUGET_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KOLONLABS_NUGET_TOKEN: ${{ secrets.KOLONLABS_NUGET_TOKEN }}
 
       - name: Build
         run: dotnet build --no-restore -c Release
@@ -238,9 +240,11 @@ jobs:
 | Escenario | Credencial | Scope requerido |
 |---|---|---|
 | Consumir en local | PAT en `KOLONLABS_NUGET_TOKEN` (variable de usuario) | `read:packages` |
-| Consumir en GitHub Actions | `secrets.GITHUB_TOKEN` (automático) | `packages: read` en el job |
-| Publicar desde GitHub Actions | `secrets.GITHUB_TOKEN` (automático) | `packages: write` en el job |
+| Consumir en GitHub Actions | Org secret `KOLONLABS_NUGET_TOKEN` (via `secrets: inherit`) | `read:packages` |
+| Publicar desde GitHub Actions | Org secret `KOLONLABS_NUGET_TOKEN` (via `secrets: inherit`) | `write:packages` |
 | Azure en runtime | — | No necesario |
+
+> `GITHUB_TOKEN` **no funciona** para consumir paquetes de otros repositorios de la organización. Solo da acceso a los paquetes del repo donde se ejecuta el workflow.
 
 ---
 
@@ -263,14 +267,21 @@ on:
   workflow_dispatch:
     inputs:
       release_type:
-        description: 'Tipo de release'
-        required: true
+        description: 'Tipo de release (rc | stable | vacío = solo CI)'
+        required: false
         type: choice
-        options: [rc, stable]
+        default: ''
+        options: ['', rc, stable]
+
+# Permisos top-level: necesarios para crear tags, releases y publicar paquetes.
+# No poner permissions a nivel de job — causa startup_failure en workflows reutilizables.
+permissions:
+  contents: write
+  packages: write
 
 jobs:
   ci-publish:
-    uses: kolonlabs/.github/.github/workflows/nuget-ci-publish.yml@main
+    uses: KolonLabs/.github/.github/workflows/nuget-ci-publish.yml@main
     with:
       release_type: ${{ inputs.release_type || '' }}
     secrets: inherit
@@ -291,21 +302,27 @@ on:
   workflow_dispatch:
     inputs:
       release_type:
-        description: 'Tipo de release'
-        required: true
+        description: 'Tipo de release (rc | stable | vacío = solo CI)'
+        required: false
         type: choice
-        options: [rc, stable]
+        default: ''
+        options: ['', rc, stable]
       package:
         description: 'Paquete a publicar'
-        required: true
+        required: false
         type: choice
         options:
+          - ''
           - KL.{Paquete1}
           - KL.{Paquete2}
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   ci-publish:
-    uses: kolonlabs/.github/.github/workflows/nuget-ci-publish.yml@main
+    uses: KolonLabs/.github/.github/workflows/nuget-ci-publish.yml@main
     with:
       release_type: ${{ inputs.release_type || '' }}
       package: ${{ inputs.package || '' }}
@@ -334,3 +351,28 @@ Copia el siguiente `nuget.config` a la raíz del nuevo repositorio:
   </packageSourceCredentials>
 </configuration>
 ```
+
+---
+
+### 6.4 Secret de organización `KOLONLABS_NUGET_TOKEN`
+
+Este secret es la pieza central que permite a todos los workflows de CI/CD de la organización consumir y publicar paquetes NuGet cross-repo. Se configura **una sola vez** a nivel de organización.
+
+**Por qué es necesario:**
+`GITHUB_TOKEN` en GitHub Actions solo tiene acceso a los paquetes del repositorio donde se ejecuta. Para acceder a paquetes de otros repos del mismo org (p.ej. `KL.Common` desde `sdk-common`), se devuelve un **403 Forbidden**. El org secret soluciona esto con un PAT que tiene permisos explícitos sobre todos los paquetes de la organización.
+
+**Configuración inicial (una sola vez):**
+
+1. Genera un Classic PAT con scopes:
+   - `write:packages` (incluye `read:packages`)
+   - `repo` (para acceso a repos privados)
+
+2. Configura el secret a nivel de organización (visible para todos los repos):
+
+```powershell
+"ghp_TU_TOKEN" | gh secret set KOLONLABS_NUGET_TOKEN --org KolonLabs --visibility all
+```
+
+3. Los workflows usan `secrets: inherit` en el job caller, lo que propaga automáticamente este secret al workflow reutilizable.
+
+**Renovación:** cuando el PAT expire, genera uno nuevo y repite el paso 2. No es necesario tocar ningún repositorio individual.
