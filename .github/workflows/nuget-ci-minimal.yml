@@ -14,12 +14,50 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
-      - run: echo "build release_type=${{ inputs.release_type }}"
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.x
+            10.x
+      - name: Restore
+        run: dotnet restore
+        env:
+          KOLONLABS_NUGET_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   publish:
     runs-on: ubuntu-latest
     needs: build
     if: inputs.release_type != ''
+    permissions:
+      contents: write
+      packages: write
     steps:
-      - run: echo "publish release_type=${{ inputs.release_type }}"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Calcular version
+        id: version
+        run: |
+          if [ -n "${{ inputs.package }}" ]; then
+            CSPROJ=$(find src -name "${{ inputs.package }}.csproj" | head -1)
+            TAG_PREFIX="${{ inputs.package }}-v"
+          else
+            CSPROJ=$(find src -name "*.csproj" | head -1)
+            TAG_PREFIX="v"
+          fi
+          VERSION=$(grep -oP '(?<=<VersionPrefix>)[^<]+' "$CSPROJ")
+          FULL_VERSION="${VERSION}-rc.1"
+          echo "version=${FULL_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG_PREFIX}${FULL_VERSION}" >> $GITHUB_OUTPUT
+      - name: Pack
+        run: |
+          dotnet pack "${{ steps.version.outputs.csproj }}" \
+            -c Release --no-build \
+            /p:Version=${{ steps.version.outputs.version }} \
+            --output ./nupkgs
