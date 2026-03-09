@@ -1,32 +1,8 @@
 on:
   workflow_call:
-    inputs:
-      release_type:
-        required: false
-        type: string
-        default: ''
-      package:
-        required: false
-        type: string
-        default: ''
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: |
-            8.x
-            10.x
-      - name: Restore
-        run: dotnet restore
-        env:
-          KOLONLABS_NUGET_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  publish:
+  myjob:
     runs-on: ubuntu-latest
     permissions:
       contents: write
